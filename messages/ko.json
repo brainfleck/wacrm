@@ -795,6 +795,9 @@
       "emptyMembers": "이 그룹에 연락처가 없습니다.",
       "unnamed": "이름 없음",
       "removeMember": "그룹에서 제거",
+      "showingPagination": "{total}명 중 {start}-{end} 표시",
+      "pageCount": "{total}페이지 중 {page}",
+      "rowsPerPage": "페이지당 행",
       "columns": {
         "name": "이름",
         "phone": "전화번호",
@@ -826,7 +829,7 @@
       "importCount": "{count}명 가져오기",
       "toastCsvMissingPhone": "CSV에 phone 열이 필요합니다.",
       "toastCsvNoRows": "CSV에서 유효한 전화번호를 찾지 못했습니다.",
-      "toastCsvInvalidPhones": "{count}행 건너뜀: 번호는 +와 국가코드로 시작해야 합니다.",
+      "toastCsvInvalidPhones": "{ready}개 연락처 준비됨. {invalid}행 건너뜀 (빈 번호 또는 국가코드 없음).",
       "toastCsvDuplicates": "중복 번호 {count}개 건너뜀.",
       "toastCsvAlreadyMembers": "해당 연락처는 이미 이 그룹에 있습니다.",
       "toastCsvFailed": "CSV 멤버 가져오기에 실패했습니다",

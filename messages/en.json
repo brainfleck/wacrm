@@ -795,6 +795,9 @@
       "emptyMembers": "No contacts in this group yet.",
       "unnamed": "Unnamed",
       "removeMember": "Remove from group",
+      "showingPagination": "Showing {start}-{end} of {total}",
+      "pageCount": "Page {page} of {total}",
+      "rowsPerPage": "Rows per page",
       "columns": {
         "name": "Name",
         "phone": "Phone",
@@ -826,7 +829,7 @@
       "importCount": "Import {count}",
       "toastCsvMissingPhone": "CSV must have a phone column.",
       "toastCsvNoRows": "No valid phone numbers found in the CSV.",
-      "toastCsvInvalidPhones": "{count} row(s) skipped: phones must start with + and a country code.",
+      "toastCsvInvalidPhones": "{ready} contacts ready. {invalid} row(s) skipped (empty phone or missing country code).",
       "toastCsvDuplicates": "{count} duplicate number(s) skipped.",
       "toastCsvAlreadyMembers": "Those contacts are already in this group.",
       "toastCsvFailed": "Failed to import CSV members",
