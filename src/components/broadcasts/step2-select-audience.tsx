@@ -162,19 +162,17 @@ export function Step2SelectAudience({
   const fetchEstimatedCount = useCallback(async () => {
     const seq = ++estimateSeq.current;
     setLoadingCount(true);
-    let count: number | null;
+    let count: number | null = null;
     try {
-      setEstimatedCount(
-        await countAudience(createClient(), {
-          type: audience.type,
-          tagIds: audience.tagIds,
-          groupIds: audience.groupIds,
-          customField: audience.customField,
-          csvContacts: audience.csvContacts,
-          excludeTagIds: audience.excludeTagIds,
-          excludeGroupIds: audience.excludeGroupIds,
-        }),
-      );
+      count = await countAudience(createClient(), {
+        type: audience.type,
+        tagIds: audience.tagIds,
+        groupIds: audience.groupIds,
+        customField: audience.customField,
+        csvContacts: audience.csvContacts,
+        excludeTagIds: audience.excludeTagIds,
+        excludeGroupIds: audience.excludeGroupIds,
+      });
     } catch {
       count = null;
     }

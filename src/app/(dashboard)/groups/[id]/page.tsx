@@ -5,6 +5,8 @@ import { useParams, useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
   ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
   FileUp,
   Loader2,
   Megaphone,
@@ -19,6 +21,7 @@ import { useCan } from '@/hooks/use-can';
 import { upsertContactsByPhone } from '@/lib/contacts/upsert-by-phone';
 import { parseBroadcastCsv } from '@/lib/broadcast-csv';
 import { stashBroadcastGroupIds } from '@/lib/broadcast-selected-groups';
+import { chunk, fetchAllPages } from '@/lib/supabase/paged-query';
 import type { Contact, ContactGroup } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -47,6 +50,10 @@ type AddMode = 'select' | 'csv';
 /** Page size for browse + search — never dump the whole contact book. */
 const CANDIDATE_PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 300;
+const MEMBER_PAGE_SIZE_OPTIONS = [10, 25, 50, 100, 200, 500] as const;
+type MemberPageSize = (typeof MEMBER_PAGE_SIZE_OPTIONS)[number];
+
+const MEMBER_UPSERT_CHUNK = 200;
 
 async function addGroupMembers(
   supabase: ReturnType<typeof createClient>,
@@ -54,14 +61,19 @@ async function addGroupMembers(
   contactIds: readonly string[],
 ): Promise<void> {
   if (contactIds.length === 0) return;
-  const rows = contactIds.map((contact_id) => ({
-    group_id: groupId,
-    contact_id,
-  }));
-  const { error } = await supabase
-    .from('contact_group_members')
-    .upsert(rows, { onConflict: 'group_id,contact_id', ignoreDuplicates: true });
-  if (error) throw new Error(error.message);
+  for (const slice of chunk(contactIds, MEMBER_UPSERT_CHUNK)) {
+    const rows = slice.map((contact_id) => ({
+      group_id: groupId,
+      contact_id,
+    }));
+    const { error } = await supabase
+      .from('contact_group_members')
+      .upsert(rows, {
+        onConflict: 'group_id,contact_id',
+        ignoreDuplicates: true,
+      });
+    if (error) throw new Error(error.message);
+  }
 }
 
 async function removeGroupMember(
@@ -89,6 +101,8 @@ export default function GroupDetailPage() {
 
   const [group, setGroup] = useState<ContactGroup | null>(null);
   const [members, setMembers] = useState<Contact[]>([]);
+  const [memberPage, setMemberPage] = useState(0);
+  const [memberPageSize, setMemberPageSize] = useState<MemberPageSize>(10);
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
   const [addMode, setAddMode] = useState<AddMode>('select');
@@ -127,36 +141,38 @@ export default function GroupDetailPage() {
 
     setGroup(row as ContactGroup);
 
-    const { data: joins, error: joinError } = await supabase
-      .from('contact_group_members')
-      .select('contact_id')
-      .eq('group_id', groupId);
+    // Page membership + embedded contacts — a single `.in('id', thousands)`
+    // blows the PostgREST URL limit (400) after large CSV imports.
+    try {
+      type MemberJoin = {
+        contact_id: string;
+        contacts: Contact | Contact[] | null;
+      };
+      const joins = await fetchAllPages<MemberJoin>((from, to) =>
+        supabase
+          .from('contact_group_members')
+          .select('contact_id, contacts(*)')
+          .eq('group_id', groupId)
+          .order('id')
+          .range(from, to),
+      );
 
-    if (joinError) {
+      const byId = new Map<string, Contact>();
+      for (const join of joins) {
+        const embedded = join.contacts;
+        const contact = Array.isArray(embedded) ? embedded[0] : embedded;
+        if (contact?.id) byId.set(contact.id, contact);
+      }
+      setMembers(
+        [...byId.values()].sort((a, b) =>
+          (a.name ?? a.phone ?? '').localeCompare(b.name ?? b.phone ?? ''),
+        ),
+      );
+      setMemberPage(0);
+    } catch {
       toast.error(t('toastLoadFailed'));
       setMembers([]);
-      setLoading(false);
-      return;
-    }
-
-    const ids = [...new Set((joins ?? []).map((r) => r.contact_id))];
-    if (ids.length === 0) {
-      setMembers([]);
-      setLoading(false);
-      return;
-    }
-
-    const { data: contacts, error: contactError } = await supabase
-      .from('contacts')
-      .select('*')
-      .in('id', ids)
-      .order('name');
-
-    if (contactError) {
-      toast.error(t('toastLoadFailed'));
-      setMembers([]);
-    } else {
-      setMembers((contacts as Contact[]) ?? []);
+      setMemberPage(0);
     }
     setLoading(false);
   }, [groupId, supabase, t]);
@@ -169,6 +185,20 @@ export default function GroupDetailPage() {
     () => new Set(members.map((m) => m.id)),
     [members],
   );
+
+  const memberTotalPages = Math.max(
+    1,
+    Math.ceil(members.length / memberPageSize),
+  );
+  const safeMemberPage = Math.min(memberPage, memberTotalPages - 1);
+  const pagedMembers = useMemo(() => {
+    const start = safeMemberPage * memberPageSize;
+    return members.slice(start, start + memberPageSize);
+  }, [members, safeMemberPage, memberPageSize]);
+
+  useEffect(() => {
+    if (memberPage !== safeMemberPage) setMemberPage(safeMemberPage);
+  }, [memberPage, safeMemberPage]);
 
   function resetAddDialog() {
     searchSeq.current += 1;
@@ -280,16 +310,23 @@ export default function GroupDetailPage() {
       return;
     }
 
+    setCsvFileName(file.name);
+    setCsvRows(result.contacts);
+    setCsvCount(result.contacts.length);
+
+    // Warn about skipped rows without sounding like the whole import failed —
+    // valid contacts stay ready in the dialog (e.g. 6385 ready + 502 skipped).
     if (result.invalid > 0) {
-      toast.warning(t('toastCsvInvalidPhones', { count: result.invalid }));
+      toast.warning(
+        t('toastCsvInvalidPhones', {
+          invalid: result.invalid,
+          ready: result.contacts.length,
+        }),
+      );
     }
     if (result.duplicates > 0) {
       toast.message(t('toastCsvDuplicates', { count: result.duplicates }));
     }
-
-    setCsvFileName(file.name);
-    setCsvRows(result.contacts);
-    setCsvCount(result.contacts.length);
   }
 
   async function handleAddMembers() {
@@ -498,7 +535,7 @@ export default function GroupDetailPage() {
                 </TableCell>
               </TableRow>
             ) : (
-              members.map((contact) => (
+              pagedMembers.map((contact) => (
                 <TableRow key={contact.id} className="border-border">
                   <TableCell className="font-medium text-foreground">
                     {contact.name || (
@@ -537,6 +574,70 @@ export default function GroupDetailPage() {
           </TableBody>
         </Table>
       </div>
+
+      {members.length > 0 && (
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-muted-foreground">
+            {t('showingPagination', {
+              start: safeMemberPage * memberPageSize + 1,
+              end: Math.min(
+                (safeMemberPage + 1) * memberPageSize,
+                members.length,
+              ),
+              total: members.length,
+            })}
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>{t('rowsPerPage')}</span>
+              <select
+                value={memberPageSize}
+                onChange={(e) => {
+                  setMemberPageSize(Number(e.target.value) as MemberPageSize);
+                  setMemberPage(0);
+                }}
+                className="h-8 rounded-md border border-border bg-muted px-2 text-xs text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+              >
+                {MEMBER_PAGE_SIZE_OPTIONS.map((size) => (
+                  <option key={size} value={size}>
+                    {size}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {memberTotalPages > 1 && (
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="icon-sm"
+                  disabled={safeMemberPage <= 0}
+                  onClick={() => setMemberPage((p) => Math.max(0, p - 1))}
+                  className="border-border text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30"
+                >
+                  <ChevronLeft className="size-4" />
+                </Button>
+                <span className="px-2 text-xs text-muted-foreground">
+                  {t('pageCount', {
+                    page: safeMemberPage + 1,
+                    total: memberTotalPages,
+                  })}
+                </span>
+                <Button
+                  variant="outline"
+                  size="icon-sm"
+                  disabled={safeMemberPage >= memberTotalPages - 1}
+                  onClick={() =>
+                    setMemberPage((p) => Math.min(memberTotalPages - 1, p + 1))
+                  }
+                  className="border-border text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30"
+                >
+                  <ChevronRight className="size-4" />
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <Dialog
         open={addOpen}
