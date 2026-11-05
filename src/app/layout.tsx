@@ -114,7 +114,15 @@ export default async function RootLayout({
           dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }}
         />
       </head>
-      <body className="min-h-full bg-background text-foreground font-sans">
+      {/*
+        Browser extensions (Grammarly, etc.) inject attributes onto <body>
+        before React hydrates (`data-gr-ext-installed`, …). That is not an
+        app bug — suppress the expected attribute mismatch here only.
+      */}
+      <body
+        className="min-h-full bg-background text-foreground font-sans"
+        suppressHydrationWarning
+      >
         <NextIntlClientProvider messages={messages} locale={locale}>
           <ThemeProvider>
             {children}
